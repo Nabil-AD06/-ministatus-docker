@@ -1,28 +1,37 @@
 
 name: Docker CI
+
 on:
   push:
     branches: [main]
     tags: ["v*"]
   pull_request:
     branches: [main]
+
 env:
   IMAGE: ministatus
+
 jobs:
   build-scan:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
       - name: Lint du Dockerfile
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: Dockerfile
           failure-threshold: warning
+
       - name: Build de l'image
         run: docker build --build-arg APP_VERSION=ci -t ${{ env.IMAGE }}:ci .
+
       - name: Tests dans le conteneur
         run: docker run --rm ${{ env.IMAGE }}:ci python -m unittest -v
 
+      # Rapport Trivy au format JSON
       - name: Rapport Trivy (JSON)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
@@ -30,30 +39,48 @@ jobs:
           format: json
           output: trivy-report.json
           exit-code: "0"
-      
+
+      # Télécharger le modèle HTML fourni par Trivy
+      - name: Télécharger le modèle HTML Trivy
+        run: |
+          mkdir -p contrib
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/html.tpl -o contrib/html.tpl
+
+      # Rapport Trivy au format HTML
       - name: Rapport Trivy (HTML)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.IMAGE }}:ci
           format: template
-          template: "@$HOME/.local/bin/trivy-bin/contrib/html.tpl"
+          template: "@${{ github.workspace }}/contrib/html.tpl"
           output: trivy-report.html
           exit-code: "0"
 
-      - name: Resume dans la page du run
+      # Résumé des vulnérabilités dans GitHub Actions
+      - name: Résumé dans la page du run
         if: always()
         run: |
           echo "### Rapport Trivy" >> "$GITHUB_STEP_SUMMARY"
-          for s in CRITICAL HIGH MEDIUM; do
-            n=$(jq "[.Results[]?.Vulnerabilities[]? | select(.Severity==\"$s\")] | length" trivy-report.json)
-            echo "- $s : $n" >> "$GITHUB_STEP_SUMMARY"
-          done
+
+          if [ -f trivy-report.json ]; then
+            for s in CRITICAL HIGH MEDIUM; do
+              n=$(jq "[.Results[]?.Vulnerabilities[]? | select(.Severity==\"$s\")] | length" trivy-report.json)
+              echo "- $s : $n" >> "$GITHUB_STEP_SUMMARY"
+            done
+          else
+            echo "Le rapport JSON n'a pas été généré." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # Publier les rapports comme artefacts
       - name: Publier les rapports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: trivy-reports
           path: trivy-report.*
+          if-no-files-found: warn
+
+      # Quality gate : bloquer si des vulnérabilités HIGH ou CRITICAL
       - name: Quality gate (HIGH et CRITICAL)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
