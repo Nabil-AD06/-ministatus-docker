@@ -1,1 +1,7 @@
-tocken.txt
+.git
+.github
+__pycache__/
+*.pyc
+.venv/
+trivy-report.*
+docker-compose.ymltocken.txt
