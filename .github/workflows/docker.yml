@@ -62,9 +62,19 @@ jobs:
           output: trivy-report.html
           exit-code: "0"
 
+      # Générer l'inventaire des composants (SBOM CycloneDX)
+      - name: Générer le SBOM
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:ci
+          format: cyclonedx
+          output: sbom.json
+          exit-code: "0"
+
       # Résumé des vulnérabilités dans GitHub Actions
       - name: Résumé dans la page du run
         if: always()
+        shell: bash
         run: |
           echo "### Rapport Trivy" >> "$GITHUB_STEP_SUMMARY"
 
@@ -77,16 +87,25 @@ jobs:
             echo "Le rapport JSON n'a pas été généré." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      # Publier les rapports comme artefacts
-      - name: Publier les rapports
+          if [ -f sbom.json ]; then
+            echo "- SBOM CycloneDX : généré" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- SBOM CycloneDX : non généré" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # Publier les rapports et le SBOM comme artefacts
+      - name: Publier les rapports et le SBOM
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: trivy-reports
-          path: trivy-report.*
+          path: |
+            trivy-report.json
+            trivy-report.html
+            sbom.json
           if-no-files-found: warn
 
-      # Quality gate : bloquer si des vulnérabilités HIGH ou CRITICAL
+      # Quality gate : bloquer les vulnérabilités HIGH et CRITICAL
       - name: Quality gate (HIGH et CRITICAL)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
@@ -97,14 +116,17 @@ jobs:
           ignore-unfixed: true
           exit-code: "1"
 
+  # Publier uniquement si build-scan réussit et si le déclencheur est un tag v*
   publish:
     needs: build-scan
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
 
-      - name: Connexion a Docker Hub
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Connexion à Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
